@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#107c41">
+<link rel="manifest" href="manifest.json">
+<title>Excel Lezer</title>
+<style>
+:root{color-scheme:light dark;--g:#107c41;--b:#ccc}
+*{box-sizing:border-box}body{margin:0;font:16px system-ui,sans-serif}
+header{background:var(--g);color:#fff;padding:10px 14px;display:flex;gap:8px;align-items:center}
+header h1{font-size:18px;margin:0;flex:1}
+button{font:inherit;padding:8px 12px;border:0;border-radius:8px;background:var(--g);color:#fff}
+header button{background:#ffffff33}
+main{padding:12px}input[type=search],input[type=text]{width:100%;padding:10px;border:1px solid var(--b);border-radius:8px;font:inherit;margin:6px 0}
+li{list-style:none;padding:10px;border-bottom:1px solid var(--b)}ul{padding:0}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px}.tabs button{background:#8883;color:inherit;white-space:nowrap}.tabs .on{background:var(--g);color:#fff}
+.wrap{overflow:auto;max-height:calc(100vh - 190px);border:1px solid var(--b);border-radius:8px}
+table{border-collapse:collapse;width:max-content;min-width:100%}
+th,td{padding:6px 10px;border-bottom:1px solid var(--b);text-align:left;white-space:nowrap}
+th{position:sticky;top:0;background:var(--g);color:#fff}
+.err{color:#c00}.muted{opacity:.7}
+</style></head><body>
+<header><h1 id="title">Excel Lezer</h1><button id="refresh" hidden>↻</button><button id="cfg" hidden>⚙</button></header>
+<main id="main"></main>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
+<script>
+const CLIENT_ID="PLAK_HIER_JE_CLIENT_ID";
+const SCOPES=["Files.Read","User.Read"];
+const app=new msal.PublicClientApplication({auth:{clientId:CLIENT_ID,authority:"https://login.microsoftonline.com/consumers",redirectUri:location.origin+location.pathname},cache:{cacheLocation:"localStorage"}});
+const $=id=>document.getElementById(id), main=$("main");
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let st={};try{st=JSON.parse(localStorage.getItem("st")||"{}")}catch(e){}
+const save=()=>localStorage.setItem("st",JSON.stringify(st));
+let account=null,cur=null,data={};
+
+async function token(){
+  try{return (await app.acquireTokenSilent({scopes:SCOPES,account})).accessToken}
+  catch(e){await app.acquireTokenRedirect({scopes:SCOPES})}
+}
+async function g(url){
+  const r=await fetch("https://graph.microsoft.com/v1.0"+url,{headers:{Authorization:"Bearer "+await token()}});
+  if(!r.ok)throw new Error(r.status+": "+(await r.text()).slice(0,200));
+  return r.json();
+}
+const fail=e=>{main.innerHTML=`<p class="err">${esc(e.message||e)}</p>`};
+
+(async()=>{
+  if("serviceWorker"in navigator)navigator.serviceWorker.register("sw.js");
+  try{
+    const r=await app.handleRedirectPromise();
+    account=r?.account||app.getAllAccounts()[0];
+    if(!account){main.innerHTML='<p>Log in met je Microsoft-account om je Excel te lezen.</p><button id="login">Inloggen</button>';
+      $("login").onclick=()=>app.loginRedirect({scopes:SCOPES});return}
+    $("cfg").hidden=false;$("refresh").hidden=false;
+    $("cfg").onclick=()=>{st={};save();route()};
+    $("refresh").onclick=()=>{data={};route()};
+    route();
+  }catch(e){fail(e)}
+})();
+
+function route(){
+  if(!st.id)return pickFile();
+  if(!st.sheets||!st.sheets.length)return pickSheets();
+  view();
+}
+
+async function pickFile(){
+  $("title").textContent="Kies Excel-bestand";
+  main.innerHTML='<input type="search" id="fq" placeholder="Zoek op bestandsnaam…"><ul id="fl" class="muted">Laden…</ul>';
+  const load=async()=>{
+    try{
+      const q=$("fq").value.trim()||"xls";
+      const d=await g(`/me/drive/root/search(q='${encodeURIComponent(q.replace(/'/g,"''"))}')?$select=id,name,parentReference&$top=100`);
+      const f=d.value.filter(x=>/\.xls[xm]$/i.test(x.name));
+      $("fl").innerHTML=f.map(x=>`<li data-id="${esc(x.id)}" data-n="${esc(x.name)}">${esc(x.name)}<br><small class="muted">${esc((x.parentReference?.path||"").replace("/drive/root:",""))||"/"}</small></li>`).join("")||"<li>Niets gevonden</li>";
+      document.querySelectorAll("#fl li[data-id]").forEach(li=>li.onclick=()=>{st={id:li.dataset.id,name:li.dataset.n,sheets:[]};save();route()});
+    }catch(e){fail(e)}
+  };
+  let t;$("fq").oninput=()=>{clearTimeout(t);t=setTimeout(load,400)};load();
+}
+
+async function pickSheets(){
+  $("title").textContent="Kies tabbladen";
+  main.innerHTML='<p class="muted">Laden…</p>';
+  try{
+    const d=await g(`/me/drive/items/${st.id}/workbook/worksheets?$select=name`);
+    main.innerHTML=`<p><b>${esc(st.name)}</b></p>`+d.value.map((s,i)=>`<label><li><input type="checkbox" value="${esc(s.name)}" id="s${i}"> ${esc(s.name)}</li></label>`).join("")+'<button id="ok">Opslaan</button>';
+    $("ok").onclick=()=>{st.sheets=[...main.querySelectorAll("input:checked")].map(i=>i.value);if(!st.sheets.length)return;save();route()};
+  }catch(e){fail(e)}
+}
+
+async function view(){
+  $("title").textContent=st.name.replace(/\.xls[xm]$/i,"");
+  cur=cur&&st.sheets.includes(cur)?cur:st.sheets[0];
+  main.innerHTML=`<div class="tabs">${st.sheets.map(s=>`<button class="${s===cur?"on":""}" data-s="${esc(s)}">${esc(s)}</button>`).join("")}</div><input type="search" id="sq" placeholder="Zoeken in tabblad…"><div class="wrap" id="tb"><p class="muted" style="padding:10px">Laden…</p></div>`;
+  main.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{cur=b.dataset.s;view()});
+  try{
+    if(!data[cur]){const d=await g(`/me/drive/items/${st.id}/workbook/worksheets/${encodeURIComponent(cur)}/usedRange(valuesOnly=false)?$select=text`);data[cur]=d.text}
+    const draw=()=>{
+      const q=$("sq").value.toLowerCase(),[h,...rows]=data[cur];
+      const r=q?rows.filter(r=>r.some(c=>String(c).toLowerCase().includes(q))):rows;
+      $("tb").innerHTML=`<table><thead><tr>${h.map(c=>`<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${r.map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    };
+    $("sq").oninput=draw;draw();
+  }catch(e){fail(e)}
+}
+</script></body></html>
