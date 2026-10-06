@@ -24,7 +24,7 @@ th{position:sticky;top:0;background:var(--g);color:#fff}
 <main id="main"></main>
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
 <script>
-const CLIENT_ID="PLAK_HIER_JE_CLIENT_ID";
+const CLIENT_ID="2b2a7bff-3f04-4eee-9e5f-57138ea6d683";
 const SCOPES=["Files.Read","User.Read"];
 const app=new msal.PublicClientApplication({auth:{clientId:CLIENT_ID,authority:"https://login.microsoftonline.com/consumers",redirectUri:location.origin+location.pathname},cache:{cacheLocation:"localStorage"}});
 const $=id=>document.getElementById(id), main=$("main");
