@@ -24,7 +24,7 @@ th{position:sticky;top:0;background:var(--g);color:#fff}
 <main id="main"></main>
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.min.js"></script>
 <script>
-const CLIENT_ID="2b2a7bff-3f04-4eee-9e5f-57138ea6d683";
+const CLIENT_ID="PLAK_HIER_JE_CLIENT_ID";
 const SCOPES=["Files.Read","User.Read"];
 const app=new msal.PublicClientApplication({auth:{clientId:CLIENT_ID,authority:"https://login.microsoftonline.com/consumers",redirectUri:location.origin+location.pathname},cache:{cacheLocation:"localStorage"}});
 const $=id=>document.getElementById(id), main=$("main");
@@ -66,17 +66,25 @@ function route(){
 
 async function pickFile(){
   $("title").textContent="Kies Excel-bestand";
-  main.innerHTML='<input type="search" id="fq" placeholder="Zoek op bestandsnaam…"><ul id="fl" class="muted">Laden…</ul>';
-  const load=async()=>{
+  const stack=[];
+  const open=async()=>{
+    const cur=stack[stack.length-1];
+    main.innerHTML='<p class="muted">Laden…</p>';
     try{
-      const q=$("fq").value.trim()||"xls";
-      const d=await g(`/me/drive/root/search(q='${encodeURIComponent(q.replace(/'/g,"''"))}')?$select=id,name,parentReference&$top=100`);
-      const f=d.value.filter(x=>/\.xls[xm]$/i.test(x.name));
-      $("fl").innerHTML=f.map(x=>`<li data-id="${esc(x.id)}" data-n="${esc(x.name)}">${esc(x.name)}<br><small class="muted">${esc((x.parentReference?.path||"").replace("/drive/root:",""))||"/"}</small></li>`).join("")||"<li>Niets gevonden</li>";
-      document.querySelectorAll("#fl li[data-id]").forEach(li=>li.onclick=()=>{st={id:li.dataset.id,name:li.dataset.n,sheets:[]};save();route()});
+      let url=(cur?`/me/drive/items/${cur.id}/children`:"/me/drive/root/children")+"?$select=id,name,folder&$top=200";
+      let items=[];
+      while(url){const d=await g(url.replace("https://graph.microsoft.com/v1.0",""));items=items.concat(d.value);url=d["@odata.nextLink"]||null}
+      items=items.filter(x=>x.folder||/\.xls[xm]$/i.test(x.name)).sort((a,b)=>(!!b.folder-!!a.folder)||a.name.localeCompare(b.name));
+      main.innerHTML=`<p><b>/ ${esc(stack.map(s=>s.name).join(" / "))}</b></p>`+(stack.length?'<button id="up">← Terug</button>':"")+"<ul>"+(items.map((x,i)=>`<li data-i="${i}">${x.folder?"📁":"📄"} ${esc(x.name)}</li>`).join("")||"<li>Geen mappen of Excel-bestanden hier</li>")+"</ul>";
+      if(stack.length)$("up").onclick=()=>{stack.pop();open()};
+      main.querySelectorAll("li[data-i]").forEach(li=>li.onclick=()=>{
+        const x=items[li.dataset.i];
+        if(x.folder){stack.push({id:x.id,name:x.name});open()}
+        else{st={id:x.id,name:x.name,sheets:[]};save();route()}
+      });
     }catch(e){fail(e)}
   };
-  let t;$("fq").oninput=()=>{clearTimeout(t);t=setTimeout(load,400)};load();
+  open();
 }
 
 async function pickSheets(){
